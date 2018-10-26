@@ -72,6 +72,9 @@ class Photosynthesis extends Analyzer {
     // Lifebloom random bloom procc
     if(spellId === SPELLS.LIFEBLOOM_BLOOM_HEAL.id && (this.lastRealBloomTimestamp === null || (event.timestamp - this.lastRealBloomTimestamp) > BLOOM_BUFFER_MS)){
       //this.lifebloomIncrease += amount;
+      //
+      //https://www.warcraftlogs.com/reports/6ZxzvnQA1Jc8ktqf#fight=7&type=healing&source=24
+      /
       // TODO - Fix the implementation of lifebloom random proccs. Some information gathered:
       /*
           // LB timing out, natural proc
