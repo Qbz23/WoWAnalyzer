@@ -16,6 +16,17 @@ const PHOTOSYNTHESIS_HOT_INCREASE = 0.2;
 // Spring blossoms double dips, confirmed by Bastas
 const PHOTOSYNTHESIS_SB_INCREASE = 0.44;
 const BLOOM_BUFFER_MS = 32;
+const LIFEBLOOM_DURATION_MS = 15000;
+//TODO Repalce this with 0.7 and do LIFEBLOOM_DURATION * PANDEMIC_COEF or w/e
+const PANDEMIC_BUFFER_MS = 4500;
+
+  function logLB(str, obj, evt){
+      const time = (evt.timestamp - obj.firstTime) / 1000.0;
+      console.log(`${str}: ${time}`);
+      //console.log(obj.lastRealBloomTimestamp);
+      //console.log((evt.timestamp - obj.firstTime) / 1000.0);
+      //console.log(evt.timestamp - obj.lastRealBloomTimestamp);
+  }
 
 /*
 While your Lifebloom is on yourself, your periodic heals heal 20% faster.
@@ -28,8 +39,15 @@ class Photosynthesis extends Analyzer {
   };
 
   lifebloomIncrease = 0;
-
-  lastRealBloomTimestamp = null;
+  firstCast = false;
+  firstTime = 0;
+  lastLifebloomCast = null;
+  lastLifebloomTargetID = null;
+  lastLifebloomDuration = null;
+  allBloomTimes = [];
+  allBloomAmounts = [];
+  naturalBloomTimes = [];
+  
 
   // Counters for increased ticking rate of hots
   increasedRateRejuvenationHealing = 0;
@@ -47,59 +65,75 @@ class Photosynthesis extends Analyzer {
     super(...args);
     this.active = this.selectedCombatant.hasTalent(SPELLS.PHOTOSYNTHESIS_TALENT.id);
   }
-
-
-  on_byPlayer_refreshbuff(event) {
-    const spellId = event.ability.guid;
-
-    if (spellId === SPELLS.LIFEBLOOM_HOT_HEAL.id) {
-      this.lastRealBloomTimestamp = event.timestamp;
+  
+  on_byPlayer_cast(event){
+    //For debugging. Not sure if theres a way to get like the first time
+    if (this.firstCast === false){
+        this.firstCast = true;
+        this.firstTime = event.timestamp;
     }
+    
+    //The problem with this is changing targets on bloom does not trigger a refresh 
+    //it has to be the same target
+    if(event.ability.guid === SPELLS.LIFEBLOOM_HOT_HEAL.id) {
+        logLB("LBCast", this, event);
+        console.log(event.targetID);
+        
+        var extraPandemicTime = 0
+        if(this.lastLifebloomCast !== null) {
+          if(event.targetID === this.lastLifebloomTargetID)
+          {
+            extraPandemicTime = PANDEMIC_BUFFER_MS;
+            const timeDelta = event.timestamp - this.lastLifebloomCast;
+            console.log(`${(timeDelta) / 1000.0} since last lifebloom`);
+            const lbTimeRemaining = this.lastLifebloomDuration - timeDelta;
+            if(lbTimeRemaining > 0 && lbTimeRemaining <= PANDEMIC_BUFFER_MS)
+            {
+              logLB(`Refresh w ${lbTimeRemaining} remaining`, this, event);
+              this.naturalBloomTimes.push(event.timestamp);
+            }
+          }
+        }
+        this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + extraPandemicTime;
+        this.lastLifebloomTargetID = event.targetID;
+        this.lastLifebloomCast = event.timestamp;
+    }
+    
+    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id) {
+        logLB("Bloom Cast?", this, event);
+    }
+    
   }
-
 
   on_byPlayer_removebuff(event){
     const spellId = event.ability.guid;
     if(spellId !== SPELLS.LIFEBLOOM_HOT_HEAL.id) {
       return;
     }
+    
+    logLB("LBEnd", this, event);
+    this.naturalBloomTimes.push(event.timestamp);
     this.lastRealBloomTimestamp = event.timestamp;
   }
 
   on_byPlayer_heal(event) {
     const spellId = event.ability.guid;
-
-    // Lifebloom random bloom procc
-    if(spellId === SPELLS.LIFEBLOOM_BLOOM_HEAL.id && (this.lastRealBloomTimestamp === null || (event.timestamp - this.lastRealBloomTimestamp) > BLOOM_BUFFER_MS)){
-      //this.lifebloomIncrease += amount;
-      //
-      //https://www.warcraftlogs.com/reports/6ZxzvnQA1Jc8ktqf#fight=7&type=healing&source=24
-      /
-      // TODO - Fix the implementation of lifebloom random proccs. Some information gathered:
-      /*
-          // LB timing out, natural proc
-          00:00:48.609 removeBuff
-          00:00:48.609 heal (bloom)
-          00:00:49.894 gainBuff
-          00:00:49.894 cast
-
-          // Refreshing LB pandemic
-          00:01:04.076 heal (bloom)
-          00:01:04.077 refreshBuff
-          00:01:04.077 cast
-
-          // Random procs
-          00:04:55.725 cast
-          00:04:55.725 gainBuff
-          00:04:56.720 heal (bloom)
-          00:04:57.377 heal (bloom)
-          00:04:59.043 heal (bloom)
-       */
+    
+    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id) {
+        logLB("Bloom Heal", this, event);
+        this.allBloomTimes.push(event.timestamp);
+        this.allBloomAmounts.push(event.amount);
     }
+    
+    //
+    //Previous link only ever used lifebloom on himself
+    //https://www.warcraftlogs.com/reports/V2KzrCJXFkYhvWpM#fight=45&type=healing&source=9
+    //
+      
 
     // Yes it actually buffs efflorescence, confirmed by Voulk and Bastas
     if(this.selectedCombatant.hasBuff(SPELLS.LIFEBLOOM_HOT_HEAL.id, null, 0, 0, this.selectedCombatant.sourceID) && (HOTS_AFFECTED_BY_ESSENCE_OF_GHANIR.includes(spellId) || spellId === SPELLS.EFFLORESCENCE_HEAL.id || spellId === SPELLS.SPRING_BLOSSOMS.id)) {
-      switch (spellId) {
+      switch (spellId) {   
         case SPELLS.REJUVENATION.id:
           this.increasedRateRejuvenationHealing += calculateEffectiveHealing(event, PHOTOSYNTHESIS_HOT_INCREASE);
           break;
@@ -142,6 +176,32 @@ class Photosynthesis extends Analyzer {
       }
     }
   }
+  
+  on_finished() { 
+    console.log(`${this.naturalBloomTimes.length} naturals`)
+    while(this.naturalBloomTimes.length > 0) {
+      const naturalBloomTime = this.naturalBloomTimes[0];
+      if (this.allBloomTimes.length <= 0) {
+        console.log(`breaking, still ${this.naturalBloomTimes.length} nats`);
+        while(this.naturalBloomTimes.length > 0){
+          console.log(`nat: ${(this.naturalBloomTimes.shift() - this.firstTime) / 1000.0}`)
+        }
+        break;
+      }
+      const nextBloomTime = this.allBloomTimes.shift();
+      const nextBloomAmount = this.allBloomAmounts.shift();
+      var bloomDelta = Math.abs(naturalBloomTime - nextBloomTime);
+
+      console.log(`Bloom at ${(naturalBloomTime - this.firstTime) / 1000.0}. Next is ${(nextBloomTime- this.firstTime) / 1000.0}. Delta: ${bloomDelta}`);  
+      if (bloomDelta <= BLOOM_BUFFER_MS) {
+        this.naturalBloomTimes.shift()
+        console.log('^Natural^')
+      } else {
+        this.lifebloomIncrease += nextBloomAmount;
+        console.log('^Photo^')
+      }
+    }    
+  }
 
   statistic() {
     const totalPercent = this.owner.getPercentageOfTotalHealingDone(
@@ -183,7 +243,7 @@ class Photosynthesis extends Analyzer {
               <li>Grove Tending: <b>${formatPercentage(this.owner.getPercentageOfTotalHealingDone(this.increasedRateGroveTendingHealing))} %</b></li>
               <hr>
               <li>Total HoT increase part: <b>${formatPercentage(totalPercent-this.owner.getPercentageOfTotalHealingDone(this.lifebloomIncrease))} %</b></li>
-              <li>Lifebloom random bloom: <b>NOT YET IMPLEMENTED</b></li>
+              <li>Lifebloom random bloom: <b>${formatPercentage(this.owner.getPercentageOfTotalHealingDone(this.lifebloomIncrease))} %</b></li>
             </ul>
             Lifebloom uptime
             <ul>
