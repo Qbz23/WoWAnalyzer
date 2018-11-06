@@ -126,7 +126,8 @@ class Photosynthesis extends Analyzer {
     
     //Refreshing first lifebloom, no way to know if going to bloom via pandemic
     if(this.currentLifebloomCastTime === this.lastLifebloomCastTime){
-      this.lastNaturalBloomTime = event.timestamp;
+      //this.lastNaturalBloomTime = event.timestamp;
+      this.potentialFirstBloomTime = event.timestamp;
       this.lbWasRefreshed = true;
       return;
     }
@@ -138,8 +139,8 @@ class Photosynthesis extends Analyzer {
       logLB("Pandemic", this, event);
       this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + lbTimeRemaining;
       logLB("Natural", this, event);
-      //this.naturalBloomTimes.push(event.timestamp);
-      this.lastNaturalBloomTime = event.timestamp;
+      this.naturalBloomTimes.push(event.timestamp);
+      //this.lastNaturalBloomTime = event.timestamp;
     } else {
       this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + PANDEMIC_BUFFER_MS;
     }
@@ -159,15 +160,16 @@ class Photosynthesis extends Analyzer {
     //Lifebloom end before first cast
     //no way to know if due to changed target or bloom expire, check at end
     if(this.currentLifebloomCastTime === null) {
-      this.lastNaturalBloomTime = event.timestamp;
+      this.potentialFirstBloomTime = event.timestamp;
+      //this.lastNaturalBloomTime = event.timestamp;
       return;
     }
     
     //Ensure expired and not removed due to changed target 
     if(event.timestamp - this.currentLifebloomCastTime >= this.lastLifebloomDuration - BLOOM_BUFFER_MS){
-      //this.naturalBloomTimes.push(event.timestamp);
+      this.naturalBloomTimes.push(event.timestamp);
       logLB("Natural", this, event);
-      this.lastNaturalBloomTime = event.timestamp;
+      //this.lastNaturalBloomTime = event.timestamp;
     }
   }
 
@@ -175,24 +177,25 @@ class Photosynthesis extends Analyzer {
     const spellId = event.ability.guid;
    
     //
-    //expect 3.58%
+    //expect 3.58%, has a natural prehot bloom, 5 naturals total
     //https://www.warcraftlogs.com/reports/V2KzrCJXFkYhvWpM#fight=45&type=healing&source=9
     //Has premature refresh
     //https://www.warcraftlogs.com/reports/fABq12hGtW3yxaNz#fight=5&type=healing&source=19 
     //Has target swap, expect 4 natural blooms. 6 total casts, 1 target swap, 1 still on at end of fight 
     //https://www.warcraftlogs.com/reports/7GNMc4kDfgwFKV1n#fight=40&type=healing&source=7
-    //   
+    //TODO original notes mentioned a bloom event occuring a MS or two BEFORE the refresh 
+    //Might be same case for end. Need to look through more logs to see if can find another example of 
+    //events being out of order RE fuzz. If they aren't, a much simpler one pass algo can work. 
+    //Furthermore, even this more complex algo assumes cast will come before refersh which would break this
     
     //Track every bloom, seperate natural from photo at end 
-    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id && event.timestamp - this.lastNaturalBloomTime > BLOOM_BUFFER_MS) {
-        //logLB("Bloom Heal", this, event);
-        //this.allBloomTimes.push(event.timestamp);
-        //this.allBloomAmounts.push(event.amount);
-        logLB('photo bloom', this, event);
-        this.lifebloomIncrease += event.amount;
-    } else if (event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id ) {
-      logLB('natural bloom', this, event);
-    }
+    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id){ //&& event.timestamp - this.lastNaturalBloomTime > BLOOM_BUFFER_MS) {
+        logLB("Bloom Heal", this, event);
+        this.allBloomTimes.push(event.timestamp);
+        this.allBloomAmounts.push(event.amount);
+        //logLB('photo bloom', this, event);
+        //this.lifebloomIncrease += event.amount;
+    } 
    
     // Yes it actually buffs efflorescence, confirmed by Voulk and Bastas
     if(this.selectedCombatant.hasBuff(SPELLS.LIFEBLOOM_HOT_HEAL.id, null, 0, 0, this.selectedCombatant.sourceID) && (HOTS_AFFECTED_BY_ESSENCE_OF_GHANIR.includes(spellId) || spellId === SPELLS.EFFLORESCENCE_HEAL.id || spellId === SPELLS.SPRING_BLOSSOMS.id)) {
@@ -240,56 +243,56 @@ class Photosynthesis extends Analyzer {
     }
   }
   
-  //If a druid pre-casts life bloom, this will misattribute that bloom to photosynthesis 
-  // on_finished() { 
-    // console.log(`${this.naturalBloomTimes.length} naturals`)
+  on_finished() { 
+    console.log(`${this.naturalBloomTimes.length} naturals`)
 
-    // //Check for blooms from prehots
-    // //If potentialFirstBloomTime lines up with a bloom, that bloom wasn't photo 
-    // //if it doesnt line up, it was either a premature refresh or buff end due to changed target 
-    // if(this.potentialFirstBloomTime != null){
-      // for(var i = 0; i < this.allBloomTimes.length; i += 1){
-        // const delta = this.potentialFirstBloomTime - this.allBloomTimes[i];
-        // //If ahead by more than fuzz buffer, won't find a bloom, can early exit
-        // if(delta < -BLOOM_BUFFER_MS){
-          // break;
-        // } else if (delta >= -BLOOM_BUFFER_MS && delta <= BLOOM_BUFFER_MS) {
-          // this.allBloomTimes.splice(i, 1);
-          // this.allBloomAmounts.splice(i, 1);
-          // console.log(`Found prehot natural at ${(this.potentialFirstBloomTime - this.firstTime) / 1000.0}`)
-        // }
-      // }
-    // }
+    //Check for blooms from prehots
+    //If potentialFirstBloomTime lines up with a bloom, that bloom wasn't photo 
+    //if it doesnt line up, it was either a premature refresh or buff end due to changed target 
+    if(this.potentialFirstBloomTime != null){
+      for(var i = 0; i < this.allBloomTimes.length; i += 1){
+        const delta = this.potentialFirstBloomTime - this.allBloomTimes[i];
+        //If ahead by more than fuzz buffer, won't find a bloom, can early exit
+        if(delta < -BLOOM_BUFFER_MS){
+          break;
+        } else if (delta >= -BLOOM_BUFFER_MS && delta <= BLOOM_BUFFER_MS) {
+          this.allBloomTimes.splice(i, 1);
+          this.allBloomAmounts.splice(i, 1);
+          console.log(`Found prehot natural at ${(this.potentialFirstBloomTime - this.firstTime) / 1000.0}`)
+        }
+      }
+    }
     
-    // while(this.naturalBloomTimes.length > 0) {
-      // const naturalBloomTime = this.naturalBloomTimes[0];
-      // if (this.allBloomTimes.length <= 0) {
-        // console.log(`breaking, still ${this.naturalBloomTimes.length} nats`);
-        // while(this.naturalBloomTimes.length > 0){
-          // console.log(`nat: ${(this.naturalBloomTimes.shift() - this.firstTime) / 1000.0}`)
-        // }
-        // break;
-      // }
-      // const nextBloomTime = this.allBloomTimes.shift();
-      // const nextBloomAmount = this.allBloomAmounts.shift();
-      // var bloomDelta = Math.abs(naturalBloomTime - nextBloomTime);
+    //Account for natural blooms
+    while(this.naturalBloomTimes.length > 0) {
+      const naturalBloomTime = this.naturalBloomTimes[0];
+      if (this.allBloomTimes.length <= 0) {
+        console.log(`breaking, still ${this.naturalBloomTimes.length} nats`);
+        while(this.naturalBloomTimes.length > 0){
+          console.log(`nat: ${(this.naturalBloomTimes.shift() - this.firstTime) / 1000.0}`)
+        }
+        break;
+      }
+      const nextBloomTime = this.allBloomTimes.shift();
+      const nextBloomAmount = this.allBloomAmounts.shift();
+      var bloomDelta = Math.abs(naturalBloomTime - nextBloomTime);
 
-      // console.log(`Bloom at ${(naturalBloomTime - this.firstTime) / 1000.0}. Next is ${(nextBloomTime- this.firstTime) / 1000.0}. Delta: ${bloomDelta}`);  
-      // if (bloomDelta <= BLOOM_BUFFER_MS) {
-        // this.naturalBloomTimes.shift()
-        // console.log('^Natural^')
-      // } else {
-        // this.lifebloomIncrease += nextBloomAmount;
-        // console.log('^Photo^')
-      // }
-    // } 
+      console.log(`Bloom at ${(naturalBloomTime - this.firstTime) / 1000.0}. Next is ${(nextBloomTime- this.firstTime) / 1000.0}. Delta: ${bloomDelta}`);  
+      if (bloomDelta <= BLOOM_BUFFER_MS) {
+        this.naturalBloomTimes.shift()
+        console.log('^Natural^')
+      } else {
+        this.lifebloomIncrease += nextBloomAmount;
+        console.log('^Photo^')
+      }
+    } 
 
-    // //add any additional blooms after all naturals are accounted for 
-    // // while(this.allBloomTimes.length > 0) {
-      // // this.allBloomTimes.shift();
-      // // this.lifebloomIncrease += this.allBloomAmounts.shift();
-    // // }
-  // }
+    //add any additional blooms after all naturals are accounted for 
+    while(this.allBloomTimes.length > 0) {
+      this.allBloomTimes.shift();
+      this.lifebloomIncrease += this.allBloomAmounts.shift();
+    }
+  }
 
   statistic() {
     const totalPercent = this.owner.getPercentageOfTotalHealingDone(
