@@ -41,9 +41,15 @@ class Photosynthesis extends Analyzer {
   lifebloomIncrease = 0;
   firstCast = false;
   firstTime = 0;
-  lastLifebloomCast = null;
-  lastLifebloomTargetID = null;
+  
+  //Refresh event happens after cast event so need to store two times to check for pandemic in refresh
+  lastLifebloomCastTime = null;
   lastLifebloomDuration = null;
+  currentLifebloomCastTime = null;
+  lbWasRefreshed = false;
+  potentialFirstBloomTime = null;
+  lastNaturalBloomTime = null;
+  
   allBloomTimes = [];
   allBloomAmounts = [];
   naturalBloomTimes = [];
@@ -66,71 +72,128 @@ class Photosynthesis extends Analyzer {
     this.active = this.selectedCombatant.hasTalent(SPELLS.PHOTOSYNTHESIS_TALENT.id);
   }
   
+  //TODO is all this even necessary? its more guarunteed to be correct but I wonder if 
+  //it will have the same results if i just set every refresh and end. 
+  //The only risk is a photo bloom happening within the bloom buffer 
+  //Isn't that what was in here before though? What was the problem with that? 
+  
+  //Hm I'm not sure this is correct. This is basically a more complicated version of the first commented uot implementation
+  //But it has the two pass implementation commented out 
+  //This similarly has the problem of the first example where the bloom can potentially come before an end 
+  //However, the same two pass shell might be able to have a much simpler imlpementation of basically the first implementation 
+  //but in two passes 
+  
   on_byPlayer_cast(event){
-    //For debugging. Not sure if theres a way to get like the first time
+    //For debugging. Not sure if theres a way to get the first time
     if (this.firstCast === false){
         this.firstCast = true;
         this.firstTime = event.timestamp;
     }
     
-    //The problem with this is changing targets on bloom does not trigger a refresh 
-    //it has to be the same target
-    if(event.ability.guid === SPELLS.LIFEBLOOM_HOT_HEAL.id) {
-        logLB("LBCast", this, event);
-        console.log(event.targetID);
-        
-        var extraPandemicTime = 0
-        if(this.lastLifebloomCast !== null) {
-          if(event.targetID === this.lastLifebloomTargetID)
-          {
-            extraPandemicTime = PANDEMIC_BUFFER_MS;
-            const timeDelta = event.timestamp - this.lastLifebloomCast;
-            console.log(`${(timeDelta) / 1000.0} since last lifebloom`);
-            const lbTimeRemaining = this.lastLifebloomDuration - timeDelta;
-            if(lbTimeRemaining > 0 && lbTimeRemaining <= PANDEMIC_BUFFER_MS)
-            {
-              logLB(`Refresh w ${lbTimeRemaining} remaining`, this, event);
-              this.naturalBloomTimes.push(event.timestamp);
-            }
-          }
-        }
-        this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + extraPandemicTime;
-        this.lastLifebloomTargetID = event.targetID;
-        this.lastLifebloomCast = event.timestamp;
+    if(event.ability.guid !== SPELLS.LIFEBLOOM_HOT_HEAL.id) {
+      return;
     }
     
-    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id) {
-        logLB("Bloom Cast?", this, event);
+    logLB(`lbcast`, this, event);
+    
+    //First cast
+    if(this.currentLifebloomCastTime === null){
+      this.lastLifebloomCastTime = event.timestamp;
+      this.currentLifebloomCastTime = event.timestamp;
+      this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS;
+      return;
     }
     
+    //If refreshed, on_byPlayer_refreshBuff sets duration considering pandemic time
+    //If this is second cast since a refresh (lbWasRefreshed == false), set duration to default 
+    if (this.lbWasRefreshed) {
+      this.lbWasRefreshed = false;
+    } else {
+      this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS;
+    }
+    
+    this.lastLifebloomCastTime = this.currentLifebloomCastTime; 
+    this.currentLifebloomCastTime = event.timestamp;
   }
 
+  on_byPlayer_refreshbuff(event) {
+    const spellId = event.ability.guid;
+    if (spellId !== SPELLS.LIFEBLOOM_HOT_HEAL.id){
+      return;
+    }
+    
+    logLB("Event Refresh", this, event);
+    
+    //Refreshing first lifebloom, no way to know if going to bloom via pandemic
+    if(this.currentLifebloomCastTime === this.lastLifebloomCastTime){
+      this.lastNaturalBloomTime = event.timestamp;
+      this.lbWasRefreshed = true;
+      return;
+    }
+    
+    //Check for bloom and set duration considering pandemic window
+    const lbTimeRemaining = this.lastLifebloomDuration - (event.timestamp - this.lastLifebloomCastTime)
+    console.log(`lbtime ${lbTimeRemaining}`);
+    if (lbTimeRemaining <= PANDEMIC_BUFFER_MS) {
+      logLB("Pandemic", this, event);
+      this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + lbTimeRemaining;
+      logLB("Natural", this, event);
+      //this.naturalBloomTimes.push(event.timestamp);
+      this.lastNaturalBloomTime = event.timestamp;
+    } else {
+      this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + PANDEMIC_BUFFER_MS;
+    }
+    
+    this.lbWasRefreshed = true;
+  }
+  
   on_byPlayer_removebuff(event){
     const spellId = event.ability.guid;
     if(spellId !== SPELLS.LIFEBLOOM_HOT_HEAL.id) {
       return;
     }
     
-    logLB("LBEnd", this, event);
-    this.naturalBloomTimes.push(event.timestamp);
-    this.lastRealBloomTimestamp = event.timestamp;
+    const lbDuration = event.timestamp - this.currentLifebloomCastTime;
+    logLB(`LBEnd on target ${event.targetID}. Dur: ${lbDuration}`, this, event);
+    
+    //Lifebloom end before first cast
+    //no way to know if due to changed target or bloom expire, check at end
+    if(this.currentLifebloomCastTime === null) {
+      this.lastNaturalBloomTime = event.timestamp;
+      return;
+    }
+    
+    //Ensure expired and not removed due to changed target 
+    if(event.timestamp - this.currentLifebloomCastTime >= this.lastLifebloomDuration - BLOOM_BUFFER_MS){
+      //this.naturalBloomTimes.push(event.timestamp);
+      logLB("Natural", this, event);
+      this.lastNaturalBloomTime = event.timestamp;
+    }
   }
 
   on_byPlayer_heal(event) {
     const spellId = event.ability.guid;
-    
-    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id) {
-        logLB("Bloom Heal", this, event);
-        this.allBloomTimes.push(event.timestamp);
-        this.allBloomAmounts.push(event.amount);
-    }
-    
+   
     //
-    //Previous link only ever used lifebloom on himself
+    //expect 3.58%
     //https://www.warcraftlogs.com/reports/V2KzrCJXFkYhvWpM#fight=45&type=healing&source=9
-    //
-      
-
+    //Has premature refresh
+    //https://www.warcraftlogs.com/reports/fABq12hGtW3yxaNz#fight=5&type=healing&source=19 
+    //Has target swap, expect 4 natural blooms. 6 total casts, 1 target swap, 1 still on at end of fight 
+    //https://www.warcraftlogs.com/reports/7GNMc4kDfgwFKV1n#fight=40&type=healing&source=7
+    //   
+    
+    //Track every bloom, seperate natural from photo at end 
+    if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id && event.timestamp - this.lastNaturalBloomTime > BLOOM_BUFFER_MS) {
+        //logLB("Bloom Heal", this, event);
+        //this.allBloomTimes.push(event.timestamp);
+        //this.allBloomAmounts.push(event.amount);
+        logLB('photo bloom', this, event);
+        this.lifebloomIncrease += event.amount;
+    } else if (event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id ) {
+      logLB('natural bloom', this, event);
+    }
+   
     // Yes it actually buffs efflorescence, confirmed by Voulk and Bastas
     if(this.selectedCombatant.hasBuff(SPELLS.LIFEBLOOM_HOT_HEAL.id, null, 0, 0, this.selectedCombatant.sourceID) && (HOTS_AFFECTED_BY_ESSENCE_OF_GHANIR.includes(spellId) || spellId === SPELLS.EFFLORESCENCE_HEAL.id || spellId === SPELLS.SPRING_BLOSSOMS.id)) {
       switch (spellId) {   
@@ -177,31 +240,56 @@ class Photosynthesis extends Analyzer {
     }
   }
   
-  on_finished() { 
-    console.log(`${this.naturalBloomTimes.length} naturals`)
-    while(this.naturalBloomTimes.length > 0) {
-      const naturalBloomTime = this.naturalBloomTimes[0];
-      if (this.allBloomTimes.length <= 0) {
-        console.log(`breaking, still ${this.naturalBloomTimes.length} nats`);
-        while(this.naturalBloomTimes.length > 0){
-          console.log(`nat: ${(this.naturalBloomTimes.shift() - this.firstTime) / 1000.0}`)
-        }
-        break;
-      }
-      const nextBloomTime = this.allBloomTimes.shift();
-      const nextBloomAmount = this.allBloomAmounts.shift();
-      var bloomDelta = Math.abs(naturalBloomTime - nextBloomTime);
+  //If a druid pre-casts life bloom, this will misattribute that bloom to photosynthesis 
+  // on_finished() { 
+    // console.log(`${this.naturalBloomTimes.length} naturals`)
 
-      console.log(`Bloom at ${(naturalBloomTime - this.firstTime) / 1000.0}. Next is ${(nextBloomTime- this.firstTime) / 1000.0}. Delta: ${bloomDelta}`);  
-      if (bloomDelta <= BLOOM_BUFFER_MS) {
-        this.naturalBloomTimes.shift()
-        console.log('^Natural^')
-      } else {
-        this.lifebloomIncrease += nextBloomAmount;
-        console.log('^Photo^')
-      }
-    }    
-  }
+    // //Check for blooms from prehots
+    // //If potentialFirstBloomTime lines up with a bloom, that bloom wasn't photo 
+    // //if it doesnt line up, it was either a premature refresh or buff end due to changed target 
+    // if(this.potentialFirstBloomTime != null){
+      // for(var i = 0; i < this.allBloomTimes.length; i += 1){
+        // const delta = this.potentialFirstBloomTime - this.allBloomTimes[i];
+        // //If ahead by more than fuzz buffer, won't find a bloom, can early exit
+        // if(delta < -BLOOM_BUFFER_MS){
+          // break;
+        // } else if (delta >= -BLOOM_BUFFER_MS && delta <= BLOOM_BUFFER_MS) {
+          // this.allBloomTimes.splice(i, 1);
+          // this.allBloomAmounts.splice(i, 1);
+          // console.log(`Found prehot natural at ${(this.potentialFirstBloomTime - this.firstTime) / 1000.0}`)
+        // }
+      // }
+    // }
+    
+    // while(this.naturalBloomTimes.length > 0) {
+      // const naturalBloomTime = this.naturalBloomTimes[0];
+      // if (this.allBloomTimes.length <= 0) {
+        // console.log(`breaking, still ${this.naturalBloomTimes.length} nats`);
+        // while(this.naturalBloomTimes.length > 0){
+          // console.log(`nat: ${(this.naturalBloomTimes.shift() - this.firstTime) / 1000.0}`)
+        // }
+        // break;
+      // }
+      // const nextBloomTime = this.allBloomTimes.shift();
+      // const nextBloomAmount = this.allBloomAmounts.shift();
+      // var bloomDelta = Math.abs(naturalBloomTime - nextBloomTime);
+
+      // console.log(`Bloom at ${(naturalBloomTime - this.firstTime) / 1000.0}. Next is ${(nextBloomTime- this.firstTime) / 1000.0}. Delta: ${bloomDelta}`);  
+      // if (bloomDelta <= BLOOM_BUFFER_MS) {
+        // this.naturalBloomTimes.shift()
+        // console.log('^Natural^')
+      // } else {
+        // this.lifebloomIncrease += nextBloomAmount;
+        // console.log('^Photo^')
+      // }
+    // } 
+
+    // //add any additional blooms after all naturals are accounted for 
+    // // while(this.allBloomTimes.length > 0) {
+      // // this.allBloomTimes.shift();
+      // // this.lifebloomIncrease += this.allBloomAmounts.shift();
+    // // }
+  // }
 
   statistic() {
     const totalPercent = this.owner.getPercentageOfTotalHealingDone(
