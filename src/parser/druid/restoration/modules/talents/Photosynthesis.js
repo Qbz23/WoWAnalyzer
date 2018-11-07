@@ -15,7 +15,7 @@ import { HOTS_AFFECTED_BY_ESSENCE_OF_GHANIR } from '../../constants';
 const PHOTOSYNTHESIS_HOT_INCREASE = 0.2;
 // Spring blossoms double dips, confirmed by Bastas
 const PHOTOSYNTHESIS_SB_INCREASE = 0.44;
-const BLOOM_BUFFER_MS = 32;
+const BLOOM_BUFFER_MS = 75;
 const LIFEBLOOM_DURATION_MS = 15000;
 //TODO Repalce this with 0.7 and do LIFEBLOOM_DURATION * PANDEMIC_COEF or w/e
 const PANDEMIC_BUFFER_MS = 4500;
@@ -136,9 +136,8 @@ class Photosynthesis extends Analyzer {
     const lbTimeRemaining = this.lastLifebloomDuration - (event.timestamp - this.lastLifebloomCastTime)
     console.log(`lbtime ${lbTimeRemaining}`);
     if (lbTimeRemaining <= PANDEMIC_BUFFER_MS) {
-      logLB("Pandemic", this, event);
+      logLB("Pandemic Natura", this, event);
       this.lastLifebloomDuration = LIFEBLOOM_DURATION_MS + lbTimeRemaining;
-      logLB("Natural", this, event);
       this.naturalBloomTimes.push(event.timestamp);
       //this.lastNaturalBloomTime = event.timestamp;
     } else {
@@ -179,14 +178,32 @@ class Photosynthesis extends Analyzer {
     //
     //expect 3.58%, has a natural prehot bloom, 5 naturals total
     //https://www.warcraftlogs.com/reports/V2KzrCJXFkYhvWpM#fight=45&type=healing&source=9
-    //Has premature refresh
+    //Expect 2.34%, Has premature refresh
     //https://www.warcraftlogs.com/reports/fABq12hGtW3yxaNz#fight=5&type=healing&source=19 
     //Has target swap, expect 4 natural blooms. 6 total casts, 1 target swap, 1 still on at end of fight 
     //https://www.warcraftlogs.com/reports/7GNMc4kDfgwFKV1n#fight=40&type=healing&source=7
+    
+    //More logs to check, but i dont yet know their correct answers. But if there are no naturals remaining 
+    //at end of second pass it's pretty close to correct with complicated algo. 
+    //Nextg jsut need to match complicated algo to simple
+    //STill worth manually looking through timeline to confirm expected # of natural blooms
+    //2 pass reports 
+    //https://www.warcraftlogs.com/reports/A1NrKY7cQ2MqhRmP#fight=33&type=healing&source=16
+    //This has fuz delta as high as 41? Look into this more. Is algo wrong or is fuzz really that high? 
+    //https://www.warcraftlogs.com/reports/1xM6jmQzRVcThZNr#fight=28&type=healing&source=30
+    //This seems to have fuzz delta of 75! Took a quick look seems legit. 
+    //https://www.warcraftlogs.com/reports/PjYVqFXfAm7bzLvN#fight=65&type=healing&source=9
+    //Here the bloom ending around 0:53 seems to not bloom. looking at the chart..
+    //https://www.warcraftlogs.com/reports/Yn1M3N6AcZCkJ94j#fight=9&type=healing&pins=0%24Separate%24%23d9002b%24auras-gained%240%240.0.0.Any%24170255928.0.0.Druid%24true%2490852840.0.0.Monk%24false%2433763&source=2&ability=33778&targetbuffs=33763&options=8
+    //It looks like the entire bloom that should have happened at 0:53ish was overhealed and apparently not reported here
+    //https://www.warcraftlogs.com/reports/Yn1M3N6AcZCkJ94j#fight=9&type=healing&source=2
+    
     //TODO original notes mentioned a bloom event occuring a MS or two BEFORE the refresh 
     //Might be same case for end. Need to look through more logs to see if can find another example of 
     //events being out of order RE fuzz. If they aren't, a much simpler one pass algo can work. 
     //Furthermore, even this more complex algo assumes cast will come before refersh which would break this
+    //Eh actually it won't BREAK, it'll register it as a potential first lifebloom. So itll incorrectly attribute 
+    //1 natural bloom to photo if there is a prehot bloom and an out of order refresh 
     
     //Track every bloom, seperate natural from photo at end 
     if(event.ability.guid === SPELLS.LIFEBLOOM_BLOOM_HEAL.id){ //&& event.timestamp - this.lastNaturalBloomTime > BLOOM_BUFFER_MS) {
@@ -267,6 +284,10 @@ class Photosynthesis extends Analyzer {
     while(this.naturalBloomTimes.length > 0) {
       const naturalBloomTime = this.naturalBloomTimes[0];
       if (this.allBloomTimes.length <= 0) {
+        //this is basically indicative of problem in algo. Been very useful for debugging.
+        //If stick with this implementation this should instead advance to next natural bloom 
+        //could either be overhealing or some other fluke. Shouldn't just fail to account for the rest 
+        //Can tell its a weird situation and you need to advance if non abs bloom delta <= - BLOOM_BUFFER_MS
         console.log(`breaking, still ${this.naturalBloomTimes.length} nats`);
         while(this.naturalBloomTimes.length > 0){
           console.log(`nat: ${(this.naturalBloomTimes.shift() - this.firstTime) / 1000.0}`)
