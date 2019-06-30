@@ -27,6 +27,13 @@
   //  28 = "The Unbound Force"
   //  32 = "Conflict and Strife"
 
+// ert example https://www.warcraftlogs.com/reports/8Nd4KCZXPVpyM62b#fight=last&source=1
+// lucicd dreams https://www.warcraftlogs.com/reports/hZtFTLqrnCDbkAdM#fight=1&source=2&type=auras
+// artifice of time https://www.warcraftlogs.com/reports/Zy79xqD6kCcTNRAr#fight=last&source=132
+// ripple in space https://www.warcraftlogs.com/reports/xyQvtHA3kfzGJwFa#fight=10&type=damage-done&source=79&ability=302770
+// Life binder's https://www.warcraftlogs.com/reports/wg7GpmZxhat6TLjV#fight=41&source=44
+
+  
 export default {
   EVER_RISING_TIDE: {
     id: 299879,
@@ -58,5 +65,32 @@ export default {
     id: 296065,
     name: 'The Ever-Rising Tide',
     icon: 'inv_elemental_mote_mana',
+  },
+  
+  LIFE_BINDERS_INVOCATION: {
+    id: 299940,
+    traitId: 20,
+    name: 'Life Binder\'s Invocation',
+    icon: 'inv_farm_herbseed',
+  },
+  LIFE_BINDERS_INVOCATION_MAJOR: {
+    id: 299944,
+    name: 'Life-Binder\'s Invocation',
+    icon: 'spell_azerite_essence07',
+  },
+  LIFE_BINDERS_INVOCATION_MAJOR_ABILITY: {
+    id: 293032,
+    name: 'Life-Binder\'s Invocation',
+    icon: 'spell_azerite_essence07',
+  },
+  LIFE_BINDERS_INVOCATION_HEAL_ON_DAMAGE_BUFF: {
+    id: 296211,
+    name: 'Seed of Eonar',
+    icon: 'inv_farm_herbseed',
+  },
+  LIFE_BINDERS_INVOCATION_HEAL_OVER_TIME_BUFF: {
+    id: 296212,
+    name: 'Seed of Eonar',
+    icon: 'inv_farm_herbseed',
   },
 };
